@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@grpc/proto-loader": "^0.5.1",
     "basic-auth": "^2.0.0",
     "bitcore-lib": "^0.15.0",
     "body-parser": "^1.16.0",
@@ -20,6 +21,7 @@
     "debug": "^3.1.0",
     "express": "^4.14.1",
     "express-session": "^1.15.1",
+    "google-proto-files": "^1.0.2",
     "graphviz": "0.0.8",
     "grpc": "^1.12.3",
     "jsonfile": "^4.0.0",

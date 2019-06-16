@@ -1,56 +1,77 @@
 const grpc = require("grpc");
+const protoLoader = require("@grpc/proto-loader");
+const protoFiles = require("google-proto-files");
 const fs = require("fs");
 const logger = require("winston");
 const debug = require("debug")("lncliweb:lightning");
 
 // expose the routes to our app with module.exports
-module.exports = function (protoPath, lndHost, lndCertPath, macaroonPath) {
+module.exports = async (protoPath, lndHost, lndCertPath, macaroonPath) => {
+  process.env.GRPC_SSL_CIPHER_SUITES = "HIGH+ECDSA";
 
-	process.env.GRPC_SSL_CIPHER_SUITES = "HIGH+ECDSA";
+  const packageDefinition = await protoLoader.load(protoPath, {
+    keepCase: true,
+    longs: String,
+    enums: String,
+    defaults: true,
+    oneofs: true,
+    includeDirs: ["node_modules/google-proto-files", "proto"]
+  });
+  const { lnrpc } = grpc.loadPackageDefinition(packageDefinition);
 
-	const lnrpcDescriptor = grpc.load(protoPath);
+  if (lndCertPath) {
+    if (fs.existsSync(lndCertPath)) {
+      const lndCert = fs.readFileSync(lndCertPath);
+      const sslCreds = grpc.credentials.createSsl(lndCert);
 
-	if (lndCertPath) {
+      let credentials;
+      if (macaroonPath) {
+        if (fs.existsSync(macaroonPath)) {
+          const macaroonCreds = grpc.credentials.createFromMetadataGenerator(
+            (args, callback) => {
+              const adminMacaroon = fs.readFileSync(macaroonPath);
+              const metadata = new grpc.Metadata();
+              metadata.add("macaroon", adminMacaroon.toString("hex"));
+              callback(null, metadata);
+            }
+          );
+          credentials = grpc.credentials.combineChannelCredentials(
+            sslCreds,
+            macaroonCreds
+          );
+        } else {
+          logger.error(
+            'The specified macaroon file "' +
+              macaroonPath +
+              '" was not found.\n' +
+              "Please add the missing lnd macaroon file or update/remove the path in the application configuration."
+          );
+          process.exit(1);
+        }
+      } else {
+        credentials = sslCreds;
+      }
 
-		if (fs.existsSync(lndCertPath)) {
+      const lightning = new lnrpc.Lightning(lndHost, credentials);
+      const walletUnlocker = new lnrpc.WalletUnlocker(lndHost, credentials);
 
-			const lndCert = fs.readFileSync(lndCertPath);
-			const sslCreds = grpc.credentials.createSsl(lndCert);
-
-			var credentials;
-			if (macaroonPath) {
-				if (fs.existsSync(macaroonPath)) {
-					var macaroonCreds = grpc.credentials.createFromMetadataGenerator(function (args, callback) {
-						const adminMacaroon = fs.readFileSync(macaroonPath);
-						const metadata = new grpc.Metadata();
-						metadata.add("macaroon", adminMacaroon.toString("hex"));
-						callback(null, metadata);
-					});
-					credentials = grpc.credentials.combineChannelCredentials(sslCreds, macaroonCreds);
-				} else {
-					logger.error("The specified macaroon file \"" + macaroonPath + "\" was not found.\n"
-							+ "Please add the missing lnd macaroon file or update/remove the path in the application configuration.");
-					process.exit(1);
-				}
-			} else {
-				credentials = sslCreds;
-			}
-			// return new lnrpcDescriptor.lnrpc.Lightning(lndHost, credentials);
-			let lightningInstance = new lnrpcDescriptor.lnrpc.Lightning(lndHost, credentials);
-			let walletUnlockerInstance = new lnrpcDescriptor.lnrpc.WalletUnlocker(lndHost, credentials);
-			return {lightning: lightningInstance, walletUnlocker: walletUnlockerInstance};
-		} else {
-
-			logger.error("The specified lnd certificate file \"" + lndCertPath + "\" was not found.\n"
-					+ "Please add the missing lnd certificate file or update the path in the application configuration.");
-			process.exit(1);
-
-		}
-
-	} else {
-
-		logger.error("Required lnd certificate path missing from application configuration.");
-		process.exit(1);
-
-	}
+      return {
+        lightning,
+        walletUnlocker
+      };
+    } else {
+      logger.error(
+        'The specified lnd certificate file "' +
+          lndCertPath +
+          '" was not found.\n' +
+          "Please add the missing lnd certificate file or update the path in the application configuration."
+      );
+      process.exit(1);
+    }
+  } else {
+    logger.error(
+      "Required lnd certificate path missing from application configuration."
+    );
+    process.exit(1);
+  }
 };
